@@ -1,0 +1,14 @@
+ N-Kanal MOSFET (NFET)
+
+ 
+                (VCC)
+                  |
+                (Last)
+                  |
+                  |
+               (Drain )
+(Wemos) D5 ----(Gate  )  UF630
+               (Source)
+                  |
+                  |
+                (GND)
