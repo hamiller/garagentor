@@ -1,33 +1,43 @@
 #include <NewPing.h>
 #include <Homie.h>
 
-#define PING_DELAY_MS       1000
-#define PING_AVERAGE_COUNT  5
+#define PING_DELAY_MS                   1000
+#define PING_AVERAGE_COUNT              5
 
-const int relayPin =        D1;           // Relay shield
-const int echoPin =         D8;
-const int triggerPin =      D7;
-const int max_distance_cm = 300;
-const long interval_ms =    1000;
+const int relayPin =                    D1;           // Relay shield
+const int cistern_echoPin =             D8;
+const int cistern_triggerPin =          D7;
+const int max_distance_cm =             220;
+const int garageDoor_echoPin =          D6;
+const int garageDoor_triggerPin =       D5;
+const long relayInterval_ms =           700;
+const long cisternInterval_ms =         60*1000;
+const long doorCheckInterval_ms =       10*1000;
 
-unsigned long timer;
-bool active = false;
+unsigned long relayTimer;
+bool relayActive = false;
+unsigned long cisternTimer;
+unsigned long doorCheckTimer;
 
 HomieNode garageNode("relay", "button");
-NewPing sonar(triggerPin, echoPin, max_distance_cm);
+HomieNode garageDoorNode("door", "sensor");
+HomieNode cisternNode("cistern", "sensor");
+NewPing cisternSonar(cistern_triggerPin, cistern_echoPin, max_distance_cm);
+NewPing garageDoorSonar(garageDoor_triggerPin, garageDoor_echoPin, max_distance_cm);
+
 
 bool relayHandler(const HomieRange& range, const String& value) {
     Homie.getLogger() << "Received garage door command " << value << endl;
     if (value == "ON") {
         Homie.getLogger() << "Activate relais" << endl;
         digitalWrite(relayPin, HIGH); // turn on relay with voltage HIGH
-        timer = millis();
-        active = true;
+        relayTimer = millis();
+        relayActive = true;
     }
     return true;
 }
 
-long pingDistance() {
+long pingDistance(NewPing sonar) {
   // wait between pings - 29ms should be the shortest delay between pings
   delay(PING_DELAY_MS);
   
@@ -37,13 +47,26 @@ long pingDistance() {
   // if no distance is read, set at max distance
   if (cm == 0) cm = max_distance_cm;
   return cm;
-} 
+}
 
-
-void loopHandler() {
+void measureCistern() {
   // measure the distance (in cm) - defaults to MAX_DISTANCE_CM if no reading
-  int current = pingDistance();
-  Homie.getLogger() << "Measured distance: " << current << endl;
+  int current = pingDistance(cisternSonar);
+  Homie.getLogger() << "Measured distance in cistern: " << current << endl;
+  cisternNode.setProperty("distance").send(String(current));
+}
+
+void checkGarageDoor() {
+  // measure the distance (in cm) - defaults to MAX_DISTANCE_CM if no reading
+  int current = pingDistance(garageDoorSonar);
+  Homie.getLogger() << "Garage door distance: " << current << endl;
+  if (current > 50) {
+    Homie.getLogger() << "Garage door is open!" << endl;
+    garageDoorNode.setProperty("open").send("true");
+  }
+  else {
+    garageDoorNode.setProperty("open").send("false");
+  }
 }
 
 void setup() {
@@ -52,23 +75,42 @@ void setup() {
 
   pinMode(relayPin, OUTPUT);
   pinMode(BUILTIN_LED, OUTPUT);
-  timer = millis();
+  long currentMs = millis();
+  relayTimer = currentMs;
+  cisternTimer = currentMs;
+  doorCheckTimer = currentMs;
 
   Homie_setFirmware("garage-door-mqtt", "1.0.0"); // The underscore is not a typo! See Magic bytes
   
   garageNode.advertise("TOGGLE").settable(relayHandler);
-  Homie.setLoopFunction(loopHandler);
   
+  Homie.disableResetTrigger(); // so we may also use D1
   Homie.setup();
 }
+
+
 
 void loop() {
   Homie.loop();
 
-  // deactive button after interval
-  if (active && millis() - timer >= interval_ms) {
+  long currentMs = millis();
+  
+  // deactive relay after interval
+  if (relayActive && currentMs - relayTimer >= relayInterval_ms) {
     Homie.getLogger() << "Deactivate relais" << endl;
     digitalWrite(relayPin, LOW);  // turn off relay with voltage LOW
-    active = false;
+    relayActive = false;
+  }
+
+  // measure cistern distance
+  if (currentMs - cisternTimer >= cisternInterval_ms) {
+    measureCistern();
+    cisternTimer = millis();
+  }
+
+  // measure door distance
+  if (currentMs - doorCheckTimer >= doorCheckInterval_ms) {
+    checkGarageDoor();
+    doorCheckTimer = millis();
   }
 }
